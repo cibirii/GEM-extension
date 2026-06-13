@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Gemini_GEM_Access_Final_v2
 // @namespace    http://tampermonkey.net/
-// @version      1.4
-// @description  极简悬浮窗：优化取消置顶后菜单消失的体验、支持新窗口打开、防 TrustedHTML 拦截
-// @author       ODD CAT
+// @version      2.3
+// @description  极简悬浮窗：完美修复标题提取、完美隔离菜单，支持在二级菜单悬停显示 ❌ 一键移除自定义同步的 GEM
+// @author       Your Name
 // @match        https://gemini.google.com/*
 // @grant        none
 // @run-at       document-end
@@ -12,7 +12,7 @@
 (function() {
     'use strict';
 
-    // 原始数据
+    // 1. 固定的内置基础数据
     const GEM_DATA = [
         {
             category: "艺术风格转换",
@@ -54,25 +54,64 @@
             category: "其他",
             items: [
                 { id: "other_1", name: '视觉资产拆解', url: 'https://gemini.google.com/gem/bd12362f9239', editUrl: 'https://gemini.google.com/gems/edit/bd12362f9239' },
-                { id: "other_2", name: '视觉草图大师', url: 'https://gemini.google.com/gem/15807a597cf5', editUrl: 'https://gemini.google.com/gems/edit/15807a597cf5' },
-                { id: "other_3", name: '九宫格品牌视觉-产品', url: 'https://gemini.google.com/gem/f2972d0807a9', editUrl: 'https://gemini.google.com/gems/edit/f2972d0807a9' },
-                { id: "other_4", name: '结构修复', url: 'https://gemini.google.com/gem/293117e38f43', editUrl: 'https://gemini.google.com/gems/edit/293117e38f43' },
-                { id: "other_5", name: '荒诞故事-6宫格', url: 'https://gemini.google.com/gem/7dbf2527d49b', editUrl: 'https://gemini.google.com/gems/edit/7dbf2527d49b' },
-                { id: "other_6", name: '荒诞故事', url: 'https://gemini.google.com/gem/cd83fbde1e86', editUrl: 'https://gemini.google.com/gems/edit/cd83fbde1e86' },
-                { id: "other_7", name: '高级时尚视觉排版大师', url: 'https://gemini.google.com/gem/11d9914fab9d', editUrl: 'https://gemini.google.com/gems/edit/11d9914fab9d' },
-                { id: "other_8", name: '儿童 AI 智能玩具场景导演', url: 'https://gemini.google.com/gem/6ba136bc7250', editUrl: 'https://gemini.google.com/gems/edit/6ba136bc7250' },
-                { id: "other_9", name: '超高强人物设定-生图', url: 'https://gemini.google.com/gem/e71d5e581de9', editUrl: 'https://gemini.google.com/gems/edit/e71d5e581de9' },
-                { id: "other_10", name: '宝玉-文章配图skill', url: 'https://gemini.google.com/gem/cc5d85d26959', editUrl: 'https://gemini.google.com/gems/edit/cc5d85d26959' },
-                { id: "other_11", name: '宝玉-NotebookLM PPT大纲生成', url: 'https://gemini.google.com/gem/5b8a086fcffe', editUrl: 'https://gemini.google.com/gems/edit/5b8a086fcffe' },
-                { id: "other_12", name: 'Prompt转GEM架构师', url: 'https://gemini.google.com/gem/d85b11194dc6', editUrl: 'https://gemini.google.com/gems/edit/d85b11194dc6' },
-                { id: "other_13", name: 'Lulumi画风', url: 'https://gemini.google.com/gem/87d4ffae6830', editUrl: 'https://gemini.google.com/gems/edit/87d4ffae6830' },
-                { id: "other_14", name: 'IP场景视觉叙事GEM', url: 'https://gemini.google.com/gem/e5c7a3200ed0', editUrl: 'https://gemini.google.com/gems/edit/e5c7a3200ed0' },
-                { id: "other_15", name: 'IP 视觉基因衍生', url: 'https://gemini.google.com/gem/74595bbfec08', editUrl: 'https://gemini.google.com/gems/edit/74595bbfec08' }
+                { id: "other_2", name: '视觉草图大师', url: 'https://gemini.google.com/gem/15807a597cf5', editUrl: 'https://gemini.google.com/gems/edit/15807a597cf5' }
             ]
         }
     ];
 
-    // 从 localStorage 读取固定的 GEM
+    // 获取动态添加的用户自定义 Gem 列表
+    function getCustomGems() {
+        try {
+            return JSON.parse(localStorage.getItem('gem_custom_added') || '[]');
+        } catch(e) { return []; }
+    }
+
+    // 移除指定的自定义同步 GEM
+    function removeCustomGem(id) {
+        let currentCustoms = getCustomGems();
+        currentCustoms = currentCustoms.filter(item => item.id !== id);
+        localStorage.setItem('gem_custom_added', JSON.stringify(currentCustoms));
+
+        // 如果该项也在置顶中，同步在置顶中取消
+        let pinned = getPinnedIds();
+        if (pinned.includes(id)) {
+            pinned = pinned.filter(pId => pId !== id);
+            localStorage.setItem('gem_pinned_links', JSON.stringify(pinned));
+        }
+
+        // 让页面上对应的“同步至插件”按钮恢复可点状态
+        const buttons = document.querySelectorAll('.gem-injected-sync-btn');
+        buttons.forEach(btn => {
+            if (btn.getAttribute('data-custom-id') === id) {
+                btn.style.background = '#1a73e8';
+                btn.style.color = '#fff';
+                btn.textContent = '➕ 同步至插件';
+            }
+        });
+
+        refreshLayout();
+    }
+
+    // 组合全部数据（基础数据 + 自定义数据）
+    function getFullGemData() {
+        const dataCopy = JSON.parse(JSON.stringify(GEM_DATA));
+        const customItems = getCustomGems();
+        if (customItems.length > 0) {
+            let targetCat = dataCopy.find(c => c.category === "其他") || dataCopy[dataCopy.length - 1];
+            if (targetCat) {
+                customItems.forEach(cItem => {
+                    if (!targetCat.items.some(i => i.id === cItem.id)) {
+                        // 标记它是个可以删除的自定义项
+                        cItem.isCustom = true; 
+                        targetCat.items.push(cItem);
+                    }
+                });
+            }
+        }
+        return dataCopy;
+    }
+
+    // 从 localStorage 读取固定的置顶 GEM
     function getPinnedIds() {
         try {
             return JSON.parse(localStorage.getItem('gem_pinned_links') || '[]');
@@ -87,24 +126,129 @@
             pinned.push(id);
         }
         localStorage.setItem('gem_pinned_links', JSON.stringify(pinned));
-        
-        // 彻底清理老布局
+        refreshLayout();
+    }
+
+    function refreshLayout() {
         const f = document.getElementById('gem-float'); if(f) f.remove();
         const s = document.getElementById('gem-sidebar-mod'); if(s) s.remove();
         const style = document.getElementById('gem-styles'); if(style) style.remove();
-        
-        // 重新注入布局，并传入当前正在交互的标记，确保保持展示
         injectAll(true);
     }
 
     function findItemById(id) {
-        for (let cat of GEM_DATA) {
+        const allData = getFullGemData();
+        for (let cat of allData) {
             let found = cat.items.find(i => i.id === id);
             if (found) return found;
         }
         return null;
     }
 
+    // ================== 核心优化：完美解析真实标题 ==================
+    function scanAndEnhanceMyGems() {
+        if (!location.href.includes('/gems/view')) return;
+
+        const gemLinks = document.querySelectorAll('a[href*="/gem/"]');
+        
+        gemLinks.forEach(link => {
+            if (link.closest('#gem-float') || link.closest('#gem-sidebar-mod')) return;
+            
+            if (link.classList.contains('gem-processed')) return;
+            link.classList.add('gem-processed');
+
+            const href = link.getAttribute('href'); 
+            const gemHash = href.split('/').pop();  
+            if (!gemHash) return;
+
+            // 💡【核心修正】：完美洗掉独立的首字和换行重复标题
+            let gemName = "";
+            let rawText = link.innerText.trim();
+
+            if (rawText) {
+                // 将文本按照换行、空格或制表符切散
+                let tokens = rawText.split(/[\n\s\t]+/).map(t => t.trim()).filter(t => t.length > 0);
+                
+                if (tokens.length >= 2) {
+                    // 核心逻辑：如果前两个词相同，或者第一个词是第二个词的开头单字（官方头像字特性）
+                    if (tokens[0] === tokens[1] || tokens[1].startsWith(tokens[0])) {
+                        // 直接舍弃掉第一个“伪首字头像”，从第二个开始重新拼接
+                        gemName = tokens.slice(1).join(" ");
+                    } else {
+                        gemName = tokens.join(" ");
+                    }
+                } else {
+                    gemName = tokens[0] || "未命名 Gem";
+                }
+            }
+
+            // 二级清洗：防止有些文本结构里标题本身后面被拼上了大量长介绍摘要
+            if (gemName.length > 40) {
+                 gemName = gemName.substring(0, 35) + "...";
+            }
+
+            const fullUrl = `https://gemini.google.com/gem/${gemHash}`;
+            const editUrl = `https://gemini.google.com/gems/edit/${gemHash}`;
+            const customId = `custom_${gemHash}`;
+
+            const rowContainer = link.closest('.gem-s-item-row, mat-list-item, [role="listitem"]') || link.parentElement;
+            if (!rowContainer) return;
+
+            const customGems = getCustomGems();
+            const isAlreadyAdded = customGems.some(item => item.id === customId);
+
+            const syncBtn = document.createElement('button');
+            syncBtn.className = 'gem-injected-sync-btn'; 
+            syncBtn.setAttribute('data-custom-id', customId); // 绑定ID便于后续状态联动恢复
+            syncBtn.style.cssText = `
+                margin-left: 15px;
+                padding: 4px 10px;
+                font-size: 12px;
+                border-radius: 12px;
+                border: 1px solid #1a73e8;
+                background: ${isAlreadyAdded ? '#e8f0fe' : '#1a73e8'};
+                color: ${isAlreadyAdded ? '#1a73e8' : '#fff'};
+                cursor: pointer;
+                font-weight: 500;
+                transition: all 0.2s;
+                z-index: 10;
+                white-space: nowrap;
+            `;
+            syncBtn.textContent = isAlreadyAdded ? '✓ 已同步至插件' : '➕ 同步至插件';
+
+            syncBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                let currentCustoms = getCustomGems();
+                const exists = currentCustoms.some(item => item.id === customId);
+
+                if (!exists) {
+                    currentCustoms.push({
+                        id: customId,
+                        name: gemName,
+                        url: fullUrl,
+                        editUrl: editUrl
+                    });
+                    localStorage.setItem('gem_custom_added', JSON.stringify(currentCustoms));
+                    syncBtn.style.background = '#e8f0fe';
+                    syncBtn.style.color = '#1a73e8';
+                    syncBtn.textContent = '✓ 已同步至插件';
+                    
+                    refreshLayout();
+                }
+            });
+
+            const actionZone = rowContainer.querySelector('.gem-action-group, [share], button[mat-icon-button]:last-child') || link;
+            if (actionZone && actionZone !== link) {
+                actionZone.parentNode.insertBefore(syncBtn, actionZone);
+            } else {
+                rowContainer.appendChild(syncBtn);
+            }
+        });
+    }
+
+    // ================== 界面渲染与注入 ==================
     function injectAll(forceShowMenu = false) {
         if (document.getElementById('gem-styles')) return;
         
@@ -113,37 +257,29 @@
         style.textContent = `
             #gem-float { position: fixed!important; top: 15px!important; right: 200px!important; z-index: 999999!important; padding-bottom: 20px!important; font-family: sans-serif; }
             .gem-f-btn { background: #1a73e8; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 14px; font-weight: 500; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
-            
-            /* 一级菜单面板 */
             .gem-f-menu { display: none; position: absolute; top: 35px; right: 0; background: #fff; min-width: 160px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border-radius: 8px; padding: 6px 0; border: 1px solid #dadce0; }
             #gem-float:hover .gem-f-menu, .gem-f-menu.gem-force-show { display: block!important; }
-            
-            /* 一级节点样式 */
             .gem-f-category-node, .gem-f-direct-item { position: relative; padding: 8px 16px; color: #3c4043; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; text-decoration: none; }
             .gem-f-category-node:hover, .gem-f-direct-item:hover { background: #f1f3f4; color: #1a73e8; }
             .gem-f-category-node::after { content: "▶"; font-size: 9px; color: #80868b; margin-left: 8px; }
-            
-            /* 二级嵌套菜单：向左滑出 */
             .gem-sub-menu { display: none; position: absolute; top: -6px; right: 100%; background: #fff; min-width: 280px; max-height: 450px; overflow-y: auto; box-shadow: -4px 4px 12px rgba(0,0,0,0.15); border-radius: 8px; padding: 6px 0; border: 1px solid #dadce0; z-index: 100000; }
             .gem-f-category-node:hover .gem-sub-menu { display: block!important; }
-            
-            /* 行排列 */
-            .gem-item-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 14px; }
+            .gem-item-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 14px; position: relative; }
             .gem-item-row:hover { background: #f1f3f4; }
-            
             .gem-f-item { text-decoration: none; color: #3c4043; font-size: 13px; flex-grow: 1; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; margin-right: 6px; }
             .gem-f-item:hover { color: #1a73e8; }
-            
-            /* 功能组件按钮 */
             .gem-action-group { display: flex; align-items: center; gap: 4px; }
             .gem-edit-link { text-decoration: none; color: #5f6368; font-size: 11px; padding: 2px 4px; border-radius: 4px; border: 1px solid #dadce0; white-space: nowrap; }
             .gem-edit-link:hover { background: #e8f0fe; color: #1a73e8; border-color: #d2e3fc; }
             
+            /* ❌ 删除按钮样式与鼠标移入显示动画 */
+            .gem-delete-btn { display: none; cursor: pointer; font-size: 11px; color: #d93025; background: #fce8e6; padding: 2px 6px; border-radius: 4px; border: 1px solid #fad2cf; font-weight: bold; margin-left: 2px; }
+            .gem-delete-btn:hover { background: #a51d24; color: #fff; border-color: #a51d24; }
+            .gem-item-row:hover .gem-delete-btn { display: inline-block!important; }
+
             .gem-pin-btn { cursor: pointer; font-size: 12px; filter: grayscale(100%); opacity: 0.5; transition: all 0.2s; padding: 2px; }
             .gem-pin-btn:hover, .gem-pin-btn.is-pinned { filter: grayscale(0%); opacity: 1; font-size: 13px; }
             .gem-divider { border-top: 1px solid #e8eaed; margin: 4px 0; }
-
-            /* 左侧栏样式 */
             .gem-s-container { margin-bottom: 12px; }
             .gem-s-head { padding: 12px 24px 8px; font-size: 12px; font-weight: 700; color: #5f6368; text-transform: uppercase; letter-spacing: .8px; font-family: 'Google Sans', Arial, sans-serif; }
             .gem-s-item-row { display: flex; align-items: center; justify-content: space-between; padding-right: 12px; border-radius: 0 20px 20px 0; }
@@ -156,8 +292,8 @@
         document.head.appendChild(style);
 
         const pinnedIds = getPinnedIds();
+        const fullDataSource = getFullGemData(); 
 
-        // 1. 顶部浮动下拉菜单创建逻辑
         if (!document.getElementById('gem-float')) {
             const f = document.createElement('div');
             f.id = 'gem-float';
@@ -168,18 +304,10 @@
             
             const m = document.createElement('div');
             m.className = 'gem-f-menu';
-            
-            // 如果是因为点击置顶按钮触发的刷新，强制添加高亮不消失类名
-            if (forceShowMenu) {
-                m.classList.add('gem-force-show');
-            }
+            if (forceShowMenu) m.classList.add('gem-force-show');
 
-            // 当鼠标第一次彻底滑开整个浮动组件时，取消强制显示类名，完美归位
-            f.addEventListener('mouseleave', () => {
-                m.classList.remove('gem-force-show');
-            });
+            f.addEventListener('mouseleave', () => m.classList.remove('gem-force-show'));
             
-            // ➕ New GEM 按钮
             const newDirect = document.createElement('a');
             newDirect.className = 'gem-f-direct-item';
             newDirect.style.fontWeight = 'bold';
@@ -188,7 +316,6 @@
             newDirect.target = '_blank';
             m.appendChild(newDirect);
 
-            // 如果有置顶数据，渲染一级展示区
             if (pinnedIds.length > 0) {
                 const div = document.createElement('div');
                 div.className = 'gem-divider';
@@ -235,8 +362,7 @@
             div2.className = 'gem-divider';
             m.appendChild(div2);
 
-            // 循环遍历二级分类树
-            GEM_DATA.forEach(cat => {
+            fullDataSource.forEach(cat => {
                 const catNode = document.createElement('div');
                 catNode.className = 'gem-f-category-node';
                 catNode.textContent = cat.category;
@@ -275,6 +401,23 @@
 
                     actionGroup.appendChild(editA);
                     actionGroup.appendChild(pinBtn);
+
+                    // 💡【新需求功能】：如果是自定义同步进来的项目，追加 ❌ 移除按钮
+                    if (l.isCustom) {
+                        const delBtn = document.createElement('span');
+                        delBtn.className = 'gem-delete-btn';
+                        delBtn.textContent = '✕';
+                        delBtn.title = '从插件中移除此条同步';
+                        delBtn.onclick = (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (confirm(`确定要从插件中移除“${l.name}”吗？`)) {
+                                removeCustomGem(l.id);
+                            }
+                        };
+                        actionGroup.appendChild(delBtn);
+                    }
+
                     row.appendChild(a);
                     row.appendChild(actionGroup);
                     subM.appendChild(row);
@@ -289,7 +432,6 @@
             document.body.appendChild(f);
         }
 
-        // 2. 左侧栏自适应安全注入逻辑
         if (!document.getElementById('gem-sidebar-mod')) {
             const nbLink = document.querySelector('a[href*="/notebooks/view"]');
             if (nbLink) {
@@ -353,7 +495,12 @@
         }
     }
 
-    const obs = new MutationObserver(() => injectAll());
+    const obs = new MutationObserver(() => {
+        injectAll();
+        scanAndEnhanceMyGems();
+    });
     obs.observe(document.documentElement, { childList: true, subtree: true });
+    
     injectAll();
+    scanAndEnhanceMyGems();
 })();
