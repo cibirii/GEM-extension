@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Gemini_GEM_Access_Final_v2
 // @namespace    http://tampermonkey.net/
-// @version      2.3
-// @description  极简悬浮窗：完美修复标题提取、完美隔离菜单，支持在二级菜单悬停显示 ❌ 一键移除自定义同步的 GEM
+// @version      2.4
+// @description  极简悬浮窗：完美修复标题提取、完美隔离菜单，支持在二级菜单悬停显示 ❌ 一键移除自定义同步的 GEM；"其他"分类超过 15 条自动出现滚动条
 // @author       Your Name
 // @match        https://gemini.google.com/*
 // @grant        none
@@ -58,6 +58,15 @@
             ]
         }
     ];
+
+    // 二级菜单条目超过此数量时启用滚动条（"其他"分类始终启用滚动容器）
+    const GEM_SCROLL_THRESHOLD = 10;
+
+    // 名称截断：按 Unicode 码点计数（兼容汉字/emoji），超出 max 加省略号
+    function truncateName(name, max) {
+        const chars = Array.from(name || '');
+        return chars.length > max ? chars.slice(0, max).join('') + '…' : name;
+    }
 
     // 获取动态添加的用户自定义 Gem 列表
     function getCustomGems() {
@@ -262,8 +271,17 @@
             .gem-f-category-node, .gem-f-direct-item { position: relative; padding: 8px 16px; color: #3c4043; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; text-decoration: none; }
             .gem-f-category-node:hover, .gem-f-direct-item:hover { background: #f1f3f4; color: #1a73e8; }
             .gem-f-category-node::after { content: "▶"; font-size: 9px; color: #80868b; margin-left: 8px; }
-            .gem-sub-menu { display: none; position: absolute; top: -6px; right: 100%; background: #fff; min-width: 280px; max-height: 450px; overflow-y: auto; box-shadow: -4px 4px 12px rgba(0,0,0,0.15); border-radius: 8px; padding: 6px 0; border: 1px solid #dadce0; z-index: 100000; }
+            /* 基础二级菜单：默认不限制高度；"其他"分类或条目 > 阈值时由 JS 添加 .gem-sub-scroll 才限高并滚动 */
+            .gem-sub-menu { display: none; position: absolute; top: -6px; right: 100%; background: #fff; min-width: 280px; box-shadow: -4px 4px 12px rgba(0,0,0,0.15); border-radius: 8px; padding: 6px 0; border: 1px solid #dadce0; z-index: 100000; }
+            /* 悬停分类时展开二级菜单（关键规则，缺失会导致二级菜单完全不显示） */
             .gem-f-category-node:hover .gem-sub-menu { display: block!important; }
+            /* 超过 15 条时的滚动样式（主要针对“其他”分类：自定义同步的 GEM 都会汇入此处） */
+            /* max-height 约等于 10 行的高度：超过阈值(10)的第 11 条起即溢出并出现滚动条 */
+            .gem-sub-scroll { max-height: 340px; overflow-y: auto; overflow-x: hidden; }
+            .gem-sub-scroll::-webkit-scrollbar { width: 8px; }
+            .gem-sub-scroll::-webkit-scrollbar-track { background: #f1f3f4; border-radius: 0 8px 8px 0; }
+            .gem-sub-scroll::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+            .gem-sub-scroll::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
             .gem-item-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 14px; position: relative; }
             .gem-item-row:hover { background: #f1f3f4; }
             .gem-f-item { text-decoration: none; color: #3c4043; font-size: 13px; flex-grow: 1; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; margin-right: 6px; }
@@ -293,6 +311,8 @@
 
         const pinnedIds = getPinnedIds();
         const fullDataSource = getFullGemData(); 
+
+        console.log('[GEM菜单] 各分类条目数:', fullDataSource.map(c => c.category + '=' + c.items.length).join(' | '), '| 滚动阈值=' + GEM_SCROLL_THRESHOLD);
 
         if (!document.getElementById('gem-float')) {
             const f = document.createElement('div');
@@ -378,8 +398,8 @@
                     a.href = l.url;
                     a.target = '_blank';
                     a.className = 'gem-f-item';
-                    a.textContent = l.name;
                     a.title = l.name;
+                    a.textContent = l.isCustom ? truncateName(l.name, 12) : l.name;
                     
                     const actionGroup = document.createElement('div');
                     actionGroup.className = 'gem-action-group';
@@ -422,6 +442,11 @@
                     row.appendChild(actionGroup);
                     subM.appendChild(row);
                 });
+
+                // 💡【新需求】：条目超过阈值时启用滚动；"其他"分类始终启用滚动容器（主要针对“其他”分类，自定义同步的 GEM 都会汇入此处）
+                if (cat.category === '其他' || cat.items.length > GEM_SCROLL_THRESHOLD) {
+                    subM.classList.add('gem-sub-scroll');
+                }
 
                 catNode.appendChild(subM);
                 m.appendChild(catNode);
